@@ -1,16 +1,17 @@
 name: CI/CD (Docker Compose)
+# ---------- Compose ----------
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 env:
-  REGISTRY: docker.io
-  APP_IMAGE: ${{ vars.APP_IMAGE || 'movieflix-app' }}
-  NGINX_IMAGE: ${{ vars.NGINX_IMAGE || 'movieflix-nginx' }}
-  ETL_IMAGE: ${{ vars.ETL_IMAGE || 'movieflix-etl' }}
+  APP_IMAGE:   jportela4c/movieflix-app
+  NGINX_IMAGE: jportela4c/movieflix-nginx
+  ETL_IMAGE:   jportela4c/movieflix-etl
 
 jobs:
   build-test-push:
@@ -29,54 +30,56 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ---------- BUILD IMAGENS ----------
+      # ---------- BUILD ----------
       - name: Build app image
         uses: docker/build-push-action@v5
         with:
           context: ./app
           push: false
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:ci
+          tags: ${{ env.APP_IMAGE }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build nginx image
         uses: docker/build-push-action@v5
         with:
           context: ./nginx
           push: false
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:ci
+          tags: ${{ env.NGINX_IMAGE }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build etl image
         uses: docker/build-push-action@v5
         with:
           context: ./etl
           push: false
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:ci
+          tags: ${{ env.ETL_IMAGE }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # ---------- TESTE DE INTEGRAÇÃO ----------
+      # ---------- TESTE (corrigido com alias 'app') ----------
       - name: Start services (app + nginx) for integration test
         run: |
-          # rede para os containers
           docker network create movieflix-ci || true
 
-          # subir app
           docker run -d --rm --name app_test --network movieflix-ci \
+            --network-alias app \
             -e PORT=8000 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:ci
+            ${{ env.APP_IMAGE }}:ci
 
-          # subir nginx apontando para hostname "app"
           docker run -d --rm --name nginx_test --network movieflix-ci -p 8080:80 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:ci
+            ${{ env.NGINX_IMAGE }}:ci
 
-          # aguardar o app responder
-          for i in {1..20}; do
+          for i in {1..40}; do
             sleep 1
             if curl -fsS http://localhost:8080/health | grep -q '"ok"'; then
               echo "App OK"; exit 0
             fi
           done
           echo "Falha ao validar /health via Nginx"
+          docker logs app_test || true
+          docker logs nginx_test || true
           exit 1
 
       - name: Stop test containers
@@ -86,27 +89,27 @@ jobs:
           docker rm -f app_test || true
           docker network rm movieflix-ci || true
 
-      # ---------- PUSH (apenas na main) ----------
+      # ---------- PUSH (somente main) ----------
       - name: Push app image (latest + sha)
         if: github.ref == 'refs/heads/main'
         run: |
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:latest
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.APP_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.APP_IMAGE }}:ci ${{ env.APP_IMAGE }}:latest
+          docker tag ${{ env.APP_IMAGE }}:ci ${{ env.APP_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.APP_IMAGE }}:latest
+          docker push ${{ env.APP_IMAGE }}:${{ github.sha }}
 
       - name: Push nginx image (latest + sha)
         if: github.ref == 'refs/heads/main'
         run: |
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:latest
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.NGINX_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.NGINX_IMAGE }}:ci ${{ env.NGINX_IMAGE }}:latest
+          docker tag ${{ env.NGINX_IMAGE }}:ci ${{ env.NGINX_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.NGINX_IMAGE }}:latest
+          docker push ${{ env.NGINX_IMAGE }}:${{ github.sha }}
 
       - name: Push etl image (latest + sha)
         if: github.ref == 'refs/heads/main'
         run: |
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:latest
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.ETL_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.ETL_IMAGE }}:ci ${{ env.ETL_IMAGE }}:latest
+          docker tag ${{ env.ETL_IMAGE }}:ci ${{ env.ETL_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.ETL_IMAGE }}:latest
+          docker push ${{ env.ETL_IMAGE }}:${{ github.sha }}
